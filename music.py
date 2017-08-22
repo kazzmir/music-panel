@@ -28,7 +28,8 @@ class Something:
     def stop_music(self):
         if self.music is not None:
             # print("Killing {}".format(self.music.pid))
-            self.music.kill()
+            #self.music.kill()
+            self.music.send_signal(2)
             self.music.wait()
             self.music = None
         self.update_icon('off')
