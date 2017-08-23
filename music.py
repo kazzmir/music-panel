@@ -51,7 +51,8 @@ class Something:
         self.stop_music()
         self.playlist = playlist
         if playlist in self.config:
-            self.music = subprocess.Popen(['mplayer', self.config[playlist]['url']], stdout = subprocess.PIPE, stderr = subprocess.PIPE, stdin = subprocess.PIPE)
+            # self.music = subprocess.Popen(['mplayer', self.config[playlist]['url']], stdout = subprocess.PIPE, stderr = subprocess.PIPE, stdin = subprocess.PIPE)
+            self.music = subprocess.Popen(['mplayer', self.config[playlist]['url']])
             self.icon.set_tooltip("Playing {}".format(self.config[playlist]['name']))
             print("Playing {} {}".format(playlist, self.music.pid))
             self.update_icon('on')
@@ -60,7 +61,10 @@ class Something:
         # print("Playing {}".format(self.music.pid))
 
     def quit(self):
+        last_pid = self.music
         self.stop_music()
+        if last_pid is not None:
+            last_pid.wait()
         import subprocess
         subprocess.call(['stty', 'sane'])
 
