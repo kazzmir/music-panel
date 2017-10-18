@@ -1,0 +1,6 @@
+station1:
+  name: A radio station
+  url: http://some.radio.station:1234
+station2:
+  name: Another radio station
+  url: http://music.i.like.com:8000
