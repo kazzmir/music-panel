@@ -11,6 +11,7 @@ import (
     "log"
     "fmt"
     "context"
+    "time"
 
     "gopkg.in/yaml.v2"
     "github.com/mattn/go-gtk/gtk"
@@ -163,16 +164,32 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc){
 
     doPlay := func(name string, url string) (context.Context, context.CancelFunc) {
         quit, cancel := context.WithCancel(globalQuit)
+        /* a command context will send SIGKILL if the context is cancelled,
+         * so we use a separate context to deal with the process
+         */
+        killQuit, killCancel := context.WithCancel(context.Background())
         /* FIXME: be able to run with ffmpeg, gstreamer, maybe some other players */
-        command := exec.CommandContext(quit, "mplayer", url)
+        command := exec.CommandContext(killQuit, "mplayer", url)
         err := command.Start()
 
         if err != nil {
             log.Printf("Could not start playing '%v': %v", name, err)
+        } else {
+            log.Printf("Launched mplayer with pid %v\n", command.Process.Pid)
         }
 
         go func(){
+            <-quit.Done()
+            command.Process.Signal(syscall.SIGTERM)
+            time.Sleep(2 * time.Second)
+            // make sure the process dies
+            killCancel()
+        }()
+
+        go func(){
             command.Wait()
+            log.Printf("Mplayer command stopped %v", command.Process.Pid)
+            cancel()
         }()
 
         return quit, cancel
@@ -182,10 +199,15 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc){
         playQuit, playCancel := context.WithCancel(globalQuit)
         _ = playQuit
 
+        defer playCancel()
+
         for {
             select {
                 case <-globalQuit.Done():
                     return
+                case <-playQuit.Done():
+                    actions <- &ProgramActionStop{}
+                    log.Printf("Music stopped")
                 case action := <-actions:
                     _, ok := action.(*ProgramActionStop)
                     if ok {
@@ -195,6 +217,8 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc){
                         icon.SetTooltipText("Not playing")
                         playCancel()
                     }
+
+                    playQuit, playCancel = context.WithCancel(context.Background())
 
                     play, ok := action.(*ProgramActionPlay)
                     if ok {
