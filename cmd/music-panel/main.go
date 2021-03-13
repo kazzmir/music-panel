@@ -216,9 +216,8 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc){
                         icon.SetFromFile("off.png")
                         icon.SetTooltipText("Not playing")
                         playCancel()
+                        playQuit, playCancel = context.WithCancel(context.Background())
                     }
-
-                    playQuit, playCancel = context.WithCancel(context.Background())
 
                     play, ok := action.(*ProgramActionPlay)
                     if ok {
@@ -231,8 +230,8 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc){
                             path := "on.png"
                             icon.SetFromFile(path)
                             icon.SetTooltipText(fmt.Sprintf("Playing '%v'", play.Name))
-                            playCancel()
 
+                            playCancel()
                             playQuit, playCancel = doPlay(play.Name, url)
                         }
                     }
