@@ -169,7 +169,7 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc){
          */
         killQuit, killCancel := context.WithCancel(context.Background())
         /* FIXME: be able to run with ffmpeg, gstreamer, maybe some other players */
-        command := exec.CommandContext(killQuit, "mplayer", url)
+        command := exec.CommandContext(killQuit, "mplayer", "-prefer-ipv4", "-loop", "0", url)
         err := command.Start()
 
         if err != nil {
