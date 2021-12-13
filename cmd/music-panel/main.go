@@ -8,6 +8,7 @@ import (
     "os/exec"
     "syscall"
     "sort"
+    "sync"
     "log"
     "fmt"
     "context"
@@ -139,7 +140,7 @@ func makePopup(config Config, currentSong string, actions chan ProgramAction) *g
     return menu
 }
 
-func run(globalQuit context.Context, globalCancel context.CancelFunc){
+func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync.WaitGroup){
     defer globalCancel()
 
     configPath := "config.yml"
@@ -163,6 +164,7 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc){
     icon.SetVisible(true)
 
     doPlay := func(name string, url string) (context.Context, context.CancelFunc) {
+        wait.Add(1)
         quit, cancel := context.WithCancel(globalQuit)
         /* a command context will send SIGKILL if the context is cancelled,
          * so we use a separate context to deal with the process
@@ -190,6 +192,7 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc){
             command.Wait()
             log.Printf("Mplayer command stopped %v", command.Process.Pid)
             cancel()
+            wait.Done()
         }()
 
         return quit, cancel
@@ -259,6 +262,8 @@ func main(){
     signaler := make(chan os.Signal, 10)
     signal.Notify(signaler, syscall.SIGINT, syscall.SIGTERM)
 
+    var wait sync.WaitGroup
+
     go func(){
         /* let the user press ctrl-c once to cleanly stop, and twice to hard kill */
         for count := 0; count < 2; count += 1 {
@@ -274,9 +279,10 @@ func main(){
         os.Exit(1)
     }()
 
-    run(globalQuit, globalCancel)
+    run(globalQuit, globalCancel, &wait)
 
     <-globalQuit.Done()
+    wait.Wait()
 
     fixTty()
     log.Printf("Goodbye")
