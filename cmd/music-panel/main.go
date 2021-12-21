@@ -179,6 +179,11 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc){
         }
 
         go func(){
+            time.Sleep(24 * time.Hour)
+            cancel()
+        }()
+
+        go func(){
             <-quit.Done()
             command.Process.Signal(syscall.SIGTERM)
             time.Sleep(2 * time.Second)
