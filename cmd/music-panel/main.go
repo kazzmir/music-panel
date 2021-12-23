@@ -180,6 +180,14 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
             log.Printf("Launched mplayer with pid %v\n", command.Process.Pid)
         }
 
+        /* automatically shut off the stream after 24 hours, so that it doesn't
+         * accidentally play forever
+         */
+        go func(){
+            time.Sleep(24 * time.Hour)
+            cancel()
+        }()
+
         go func(){
             <-quit.Done()
             command.Process.Signal(syscall.SIGTERM)
