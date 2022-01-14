@@ -86,6 +86,9 @@ type ProgramAction interface {
 type ProgramActionStop struct {
 }
 
+type ProgramActionRestart struct {
+}
+
 type ProgramActionPlay struct {
     Name string
 }
@@ -207,6 +210,24 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
     }
 
     go func(){
+        /* sleep for 1 second and check if roughly 1 second has elapsed. if more than 1 second has gone by
+         * then it is likely that the computer went to sleep via suspend/hibernate, so mplayer should be restarted
+         */
+        for globalQuit.Err() == nil {
+            start := time.Now()
+            time.Sleep(time.Second)
+            end := time.Now()
+            if (end.Sub(start) > time.Second * 2){
+                /* try to emit the restart event, but ignore it if actions is full */
+                select {
+                    case actions <- &ProgramActionRestart{}:
+                    default:
+                }
+            }
+        }
+    }()
+
+    go func(){
         playQuit, playCancel := context.WithCancel(globalQuit)
         _ = playQuit
 
@@ -228,6 +249,24 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
                         icon.SetTooltipText("Not playing")
                         playCancel()
                         playQuit, playCancel = context.WithCancel(context.Background())
+                    }
+
+                    _, ok = action.(*ProgramActionRestart)
+                    if ok {
+                        if currentPlaying != NoMusic {
+                            log.Printf("Restarting stream")
+                            url := config.GetUrl(currentPlaying)
+                            if url != "" {
+                                log.Printf("Play url '%v' = '%v'", currentPlaying, url)
+
+                                path := "on.png"
+                                icon.SetFromFile(path)
+                                icon.SetTooltipText(fmt.Sprintf("Playing '%v'", currentPlaying))
+
+                                playCancel()
+                                playQuit, playCancel = doPlay(currentPlaying, url)
+                            }
+                        }
                     }
 
                     play, ok := action.(*ProgramActionPlay)
