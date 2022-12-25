@@ -187,8 +187,11 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
          * accidentally play forever
          */
         go func(){
-            time.Sleep(24 * time.Hour)
-            cancel()
+            select {
+                case <-quit.Done():
+                case <-time.After(24 * time.Hour):
+                    cancel()
+            }
         }()
 
         go func(){
