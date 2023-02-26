@@ -9,14 +9,30 @@ import (
     "syscall"
     "sort"
     "sync"
+    "strconv"
     "log"
     "fmt"
     "context"
     "time"
+    "path/filepath"
 
     "gopkg.in/yaml.v2"
     "github.com/mattn/go-gtk/gtk"
 )
+
+func GetOrCreateConfigDir() (string, error) {
+    configDir, err := os.UserConfigDir()
+    if err != nil {
+        return "", err
+    }
+    configPath := filepath.Join(configDir, "music-panel")
+    err = os.MkdirAll(configPath, 0755)
+    if err != nil {
+        return "", err
+    }
+
+    return configPath, nil
+}
 
 type Config struct {
     /* map from a name to a url */
@@ -143,6 +159,31 @@ func makePopup(config Config, currentSong string, actions chan ProgramAction) *g
     return menu
 }
 
+type RemovePidCallback func()
+
+func saveMplayerPid(command *exec.Cmd) RemovePidCallback {
+
+    if command.Process != nil {
+        pid := command.Process.Pid
+
+        dir, err := GetOrCreateConfigDir()
+        if err == nil {
+            now := time.Now()
+            file := filepath.Join(dir, fmt.Sprintf("mplayer-%v.pid", now.UnixNano()))
+            err := os.WriteFile(file, []byte(strconv.Itoa(pid)), 0600)
+
+            if err == nil {
+                return func(){
+                    os.Remove(file)
+                }
+            }
+        }
+    }
+
+    return func(){
+    }
+}
+
 func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync.WaitGroup){
     defer globalCancel()
 
@@ -183,6 +224,8 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
             log.Printf("Launched mplayer with pid %v\n", command.Process.Pid)
         }
 
+        doRemovePid := saveMplayerPid(command)
+
         /* automatically shut off the stream after 24 hours, so that it doesn't
          * accidentally play forever
          */
@@ -206,6 +249,7 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
             command.Wait()
             log.Printf("Mplayer command stopped %v", command.Process.Pid)
             cancel()
+            doRemovePid()
             wait.Done()
         }()
 
