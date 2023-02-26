@@ -9,6 +9,7 @@ import (
     "syscall"
     "sort"
     "sync"
+    "flag"
     "bytes"
     "strings"
     "strconv"
@@ -210,7 +211,7 @@ func readLastName() (string, bool) {
     return string(data), true
 }
 
-func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync.WaitGroup){
+func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync.WaitGroup, autoRun bool){
     defer globalCancel()
 
     configPath := "config.yml"
@@ -233,10 +234,12 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
     icon.SetTooltipText("Not playing")
     icon.SetVisible(true)
 
-    lastUrl, ok := readLastName()
-    if ok {
-        actions <- &ProgramActionPlay{
-            Name: lastUrl,
+    if autoRun {
+        lastUrl, ok := readLastName()
+        if ok {
+            actions <- &ProgramActionPlay{
+                Name: lastUrl,
+            }
         }
     }
 
@@ -517,6 +520,9 @@ func main(){
     log.Printf("Initializing")
     gtk.Init(&os.Args)
 
+    autoRun := flag.Bool("auto-run", false, "automatically run the last played station")
+    flag.Parse()
+
     globalQuit, globalCancel := context.WithCancel(context.Background())
 
     signaler := make(chan os.Signal, 10)
@@ -541,7 +547,7 @@ func main(){
         os.Exit(1)
     }()
 
-    run(globalQuit, globalCancel, &wait)
+    run(globalQuit, globalCancel, &wait, *autoRun)
 
     <-globalQuit.Done()
     wait.Wait()
