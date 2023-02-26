@@ -9,6 +9,7 @@ import (
     "syscall"
     "sort"
     "sync"
+    "strings"
     "strconv"
     "log"
     "fmt"
@@ -341,6 +342,53 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
     log.Printf("Main done")
 }
 
+/* kill a pid but only if it has the given process name */
+func maybeKillPid(processName string, pid int){
+    process, err := os.FindProcess(pid)
+    if err != nil {
+        return
+    }
+
+    log.Printf("Killing leftover mplayer process %v", pid)
+
+    _ = process
+
+    /* FIXME: check process name by looking at /proc/$pid/cmdline */
+
+    syscall.Kill(pid, syscall.SIGTERM)
+}
+
+func killExistingMplayer(){
+    dir, err := GetOrCreateConfigDir()
+    if err == nil {
+        paths, err := os.ReadDir(dir)
+        if err == nil {
+            for _, path := range paths {
+                log.Printf("Check pid file '%v'", path.Name())
+                if path.IsDir() {
+                    continue
+                }
+
+                fullPath := filepath.Join(dir, path.Name())
+
+                if strings.HasPrefix(path.Name(), "mplayer") && strings.HasSuffix(path.Name(), ".pid") {
+                    contents, err := os.ReadFile(fullPath)
+                    if err == nil {
+                        pid, err := strconv.Atoi(string(contents))
+                        if err == nil {
+                            maybeKillPid("mplayer", pid)
+                        }
+                    }
+
+                    os.Remove(fullPath)
+                }
+            }
+        } else {
+            log.Printf("Could not get list of old files: %v", err)
+        }
+    }
+}
+
 func fixTty(){
     /* run 'stty sane' */
     /* only need this if we show the output of mplayer */
@@ -355,6 +403,8 @@ func main(){
 
     signaler := make(chan os.Signal, 10)
     signal.Notify(signaler, syscall.SIGINT, syscall.SIGTERM)
+
+    killExistingMplayer()
 
     var wait sync.WaitGroup
 
