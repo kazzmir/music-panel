@@ -1,0 +1,13 @@
+[Unit]
+Description=Music Panel
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+ExecStart=/usr/local/bin/music-panel -auto-run
+
+[Install]
+WantedBy=multi-user.target
