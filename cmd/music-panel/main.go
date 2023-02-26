@@ -186,6 +186,30 @@ func saveMplayerPid(command *exec.Cmd) RemovePidCallback {
     }
 }
 
+/* saves the url as the last station listened to */
+func updateLastStation(name string) error {
+    dir, err := GetOrCreateConfigDir()
+    if err != nil {
+        return err
+    }
+
+    return os.WriteFile(filepath.Join(dir, "last"), []byte(name), 0600)
+}
+
+func readLastName() (string, bool) {
+    dir, err := GetOrCreateConfigDir()
+    if err != nil {
+        return "", false
+    }
+
+    data, err := os.ReadFile(filepath.Join(dir, "last"))
+    if err != nil {
+        return "", false
+    }
+
+    return string(data), true
+}
+
 func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync.WaitGroup){
     defer globalCancel()
 
@@ -209,6 +233,13 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
     icon.SetTooltipText("Not playing")
     icon.SetVisible(true)
 
+    lastUrl, ok := readLastName()
+    if ok {
+        actions <- &ProgramActionPlay{
+            Name: lastUrl,
+        }
+    }
+
     doPlay := func(name string, url string) (context.Context, context.CancelFunc) {
         wait.Add(1)
         quit, cancel := context.WithCancel(globalQuit)
@@ -228,6 +259,8 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
         }
 
         doRemovePid := saveMplayerPid(command)
+
+        updateLastStation(name)
 
         /* automatically shut off the stream after 24 hours, so that it doesn't
          * accidentally play forever
@@ -450,7 +483,6 @@ func killExistingMplayer(){
         paths, err := os.ReadDir(dir)
         if err == nil {
             for _, path := range paths {
-                log.Printf("Check pid file '%v'", path.Name())
                 if path.IsDir() {
                     continue
                 }
