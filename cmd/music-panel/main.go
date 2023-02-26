@@ -357,7 +357,7 @@ func maybeKillPid(processName string, pid int){
 
     /* FIXME: check process name by looking at /proc/$pid/cmdline */
 
-    syscall.Kill(pid, syscall.SIGTERM)
+    syscall.Kill(-pid, syscall.SIGTERM)
 }
 
 func killExistingMplayer(){
