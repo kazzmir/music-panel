@@ -9,3 +9,14 @@ Build with 'make'
 Usage:
 
 Copy config.yml.sample to config.yml, and edit config.yml with url's of streaming music that mplayer can play. Then run 'music-panel', and an icon should appear in your panel.
+
+Systemd integration:
+
+* Copy etc/music-panel.service to ~/.config/systemd/user
+* Copy music-panel binary to /usr/local/bin
+* Copy config.yml to ~/.config/music-panel
+
+```
+$ systemctl --user enable music-panel
+$ systemctl --user start music-panel
+```

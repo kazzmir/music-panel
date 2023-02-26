@@ -9,14 +9,39 @@ import (
     "syscall"
     "sort"
     "sync"
+    "flag"
+    _ "embed"
+    "bytes"
+    "strings"
+    "strconv"
     "log"
     "fmt"
     "context"
     "time"
+    "path/filepath"
 
     "gopkg.in/yaml.v2"
     "github.com/mattn/go-gtk/gtk"
 )
+
+//go:embed on.png
+var PngOn []byte
+//go:embed off.png
+var PngOff []byte
+
+func GetOrCreateConfigDir() (string, error) {
+    configDir, err := os.UserConfigDir()
+    if err != nil {
+        return "", err
+    }
+    configPath := filepath.Join(configDir, "music-panel")
+    err = os.MkdirAll(configPath, 0755)
+    if err != nil {
+        return "", err
+    }
+
+    return configPath, nil
+}
 
 type Config struct {
     /* map from a name to a url */
@@ -143,28 +168,123 @@ func makePopup(config Config, currentSong string, actions chan ProgramAction) *g
     return menu
 }
 
-func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync.WaitGroup){
-    defer globalCancel()
+type RemovePidCallback func()
 
+func saveMplayerPid(command *exec.Cmd) RemovePidCallback {
+
+    if command.Process != nil {
+        pid := command.Process.Pid
+
+        dir, err := GetOrCreateConfigDir()
+        if err == nil {
+            now := time.Now()
+            file := filepath.Join(dir, fmt.Sprintf("mplayer-%v.pid", now.UnixNano()))
+            err := os.WriteFile(file, []byte(strconv.Itoa(pid)), 0600)
+
+            if err == nil {
+                return func(){
+                    os.Remove(file)
+                }
+            }
+        }
+    }
+
+    return func(){
+    }
+}
+
+/* saves the url as the last station listened to */
+func updateLastStation(name string) error {
+    dir, err := GetOrCreateConfigDir()
+    if err != nil {
+        return err
+    }
+
+    return os.WriteFile(filepath.Join(dir, "last"), []byte(name), 0600)
+}
+
+func readLastName() (string, bool) {
+    dir, err := GetOrCreateConfigDir()
+    if err != nil {
+        return "", false
+    }
+
+    data, err := os.ReadFile(filepath.Join(dir, "last"))
+    if err != nil {
+        return "", false
+    }
+
+    return string(data), true
+}
+
+func SaveTempPng(data []byte) string {
+    path, err := os.CreateTemp("", "music-panel*.png")
+    if err != nil {
+        out := "/tmp/music-panel-tmp.png"
+        err := os.WriteFile(out, data, 0600)
+        if err != nil {
+            // not sure what to do
+            return ""
+        }
+        return out
+    }
+
+    path.Write(data)
+
+    return path.Name()
+}
+
+func doLoadConfig() (Config, error) {
     configPath := "config.yml"
     config, err := loadConfig(configPath)
+    if err == nil {
+        log.Printf("Loaded '%v'", configPath)
+        return config, nil
+    }
+
+    configDir, err := GetOrCreateConfigDir()
+    if err == nil {
+        full := filepath.Join(configDir, configPath)
+        config, err = loadConfig(full)
+        if err == nil {
+            log.Printf("Loaded '%v'", full)
+            return config, nil
+        }
+    }
+
+    return Config{}, err
+}
+
+func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync.WaitGroup, autoRun bool){
+    defer globalCancel()
+
+    config, err := doLoadConfig()
     if err != nil {
         log.Printf("Could not load config file: %v", err)
         return
     }
 
-    log.Printf("Loaded '%v'", configPath)
-
     actions := make(chan ProgramAction, 10)
 
     currentPlaying := NoMusic
-    icon := gtk.NewStatusIconFromFile("off.png")
+    path := SaveTempPng(PngOff)
+    icon := gtk.NewStatusIconFromFile(path)
+    os.Remove(path)
     icon.Connect("activate", func() {
         menu := makePopup(config, currentPlaying, actions)
         menu.Popup(nil, nil, nil, nil, 0, gtk.GetCurrentEventTime())
     })
     icon.SetTooltipText("Not playing")
     icon.SetVisible(true)
+
+    if autoRun {
+        lastUrl, ok := readLastName()
+        if ok {
+            actions <- &ProgramActionPlay{
+                Name: lastUrl,
+            }
+        }
+    }
 
     doPlay := func(name string, url string) (context.Context, context.CancelFunc) {
         wait.Add(1)
@@ -175,6 +295,7 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
         killQuit, killCancel := context.WithCancel(context.Background())
         /* FIXME: be able to run with ffmpeg, gstreamer, maybe some other players */
         command := exec.CommandContext(killQuit, "mplayer", "-prefer-ipv4", "-loop", "0", url)
+        command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
         err := command.Start()
 
         if err != nil {
@@ -182,6 +303,10 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
         } else {
             log.Printf("Launched mplayer with pid %v\n", command.Process.Pid)
         }
+
+        doRemovePid := saveMplayerPid(command)
+
+        updateLastStation(name)
 
         /* automatically shut off the stream after 24 hours, so that it doesn't
          * accidentally play forever
@@ -196,7 +321,8 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
 
         go func(){
             <-quit.Done()
-            command.Process.Signal(syscall.SIGTERM)
+            // command.Process.Signal(syscall.SIGTERM)
+            syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
             time.Sleep(2 * time.Second)
             // make sure the process dies
             killCancel()
@@ -206,6 +332,7 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
             command.Wait()
             log.Printf("Mplayer command stopped %v", command.Process.Pid)
             cancel()
+            doRemovePid()
             wait.Done()
         }()
 
@@ -248,7 +375,9 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
                     if ok {
                         log.Printf("Stop playing")
                         currentPlaying = NoMusic
-                        icon.SetFromFile("off.png")
+                        path := SaveTempPng(PngOff)
+                        icon.SetFromFile(path)
+                        os.Remove(path)
                         icon.SetTooltipText("Not playing")
                         playCancel()
                         playQuit, playCancel = context.WithCancel(context.Background())
@@ -262,8 +391,9 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
                             if url != "" {
                                 log.Printf("Play url '%v' = '%v'", currentPlaying, url)
 
-                                path := "on.png"
+                                path := SaveTempPng(PngOn)
                                 icon.SetFromFile(path)
+                                os.Remove(path)
                                 icon.SetTooltipText(fmt.Sprintf("Playing '%v'", currentPlaying))
 
                                 playCancel()
@@ -280,8 +410,9 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
                             /* FIXME: race condition */
                             currentPlaying = play.Name
 
-                            path := "on.png"
+                            path := SaveTempPng(PngOn)
                             icon.SetFromFile(path)
+                            os.Remove(path)
                             icon.SetTooltipText(fmt.Sprintf("Playing '%v'", play.Name))
 
                             playCancel()
@@ -297,6 +428,135 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
     log.Printf("Main done")
 }
 
+func runPsPid(pid int) (string, error) {
+    command := exec.Command("ps", "-o", "cmd", strconv.Itoa(pid))
+    var out strings.Builder
+    command.Stdout = &out
+    err := command.Run()
+    return out.String(), err
+}
+
+/* /proc/$pid/cmdline contains the program and its arguments as it was executed where each
+ * string value is separated by a null (0) byte
+ */
+func readProcName(pid int) (string, error) {
+    data, err := os.ReadFile(fmt.Sprintf("/proc/%v/cmdline", pid))
+    if err != nil {
+        return "", err
+    }
+
+    /* the command should be the first thing in the output that ends with an null byte */
+    before, _, found := bytes.Cut(data, []byte{0})
+    if found {
+        return string(before), nil
+    }
+
+    return "", fmt.Errorf("unable to parse cmdline")
+}
+
+func readProcExe(pid int) (string, error) {
+    link, err := filepath.EvalSymlinks(fmt.Sprintf("/proc/%v/exe", pid))
+    if err != nil {
+        return "", err
+    }
+    return link, nil
+}
+
+/* ps output is like
+ * CMD
+ * xyz arg1 arg2 ...
+ */
+func extractPsProcess(output string) (string, bool) {
+    lines := strings.Split(output, "\n")
+    if len(lines) >= 2 {
+        use := lines[1]
+        parts := strings.Fields(use)
+        if len(parts) > 0 {
+            return parts[0], true
+        }
+    }
+
+    return "", false
+}
+
+func checkProcessName(processName string, pid int) bool {
+    /* check that the given pid has the right processName using one of three methods:
+     * 1. read /proc/$pid/cmdline and compare the first string to processName
+     * 2. follow the /proc/$pid/exe symlink and check the binary has the processName
+     * 3. use 'ps -o cmd $pid' to see what the command is
+     */
+
+    procName, err := readProcName(pid)
+    if err == nil {
+        return procName == processName
+    }
+    
+    procExe, err := readProcExe(pid)
+    if err == nil {
+        // procExe is a path to some binary on the system
+        return filepath.Base(procExe) == processName
+    }
+
+    psOutput, err := runPsPid(pid)
+    if err == nil {
+        psName, ok := extractPsProcess(psOutput)
+        if ok {
+            return psName == processName
+        }
+    }
+
+    return false
+}
+
+/* kill a pid but only if it has the given process name */
+func maybeKillPid(processName string, pid int){
+    // first check the process even exists
+    process, err := os.FindProcess(pid)
+    if err != nil {
+        return
+    }
+
+    if checkProcessName(processName, pid) {
+        log.Printf("Killing leftover mplayer process %v", pid)
+
+        _ = process
+
+        /* FIXME: check process name by looking at /proc/$pid/cmdline */
+
+        syscall.Kill(-pid, syscall.SIGTERM)
+    }
+}
+
+func killExistingMplayer(){
+    dir, err := GetOrCreateConfigDir()
+    if err == nil {
+        paths, err := os.ReadDir(dir)
+        if err == nil {
+            for _, path := range paths {
+                if path.IsDir() {
+                    continue
+                }
+
+                fullPath := filepath.Join(dir, path.Name())
+
+                if strings.HasPrefix(path.Name(), "mplayer") && strings.HasSuffix(path.Name(), ".pid") {
+                    contents, err := os.ReadFile(fullPath)
+                    if err == nil {
+                        pid, err := strconv.Atoi(string(contents))
+                        if err == nil {
+                            maybeKillPid("mplayer", pid)
+                        }
+                    }
+
+                    os.Remove(fullPath)
+                }
+            }
+        } else {
+            log.Printf("Could not get list of old files: %v", err)
+        }
+    }
+}
+
 func fixTty(){
     /* run 'stty sane' */
     /* only need this if we show the output of mplayer */
@@ -307,10 +567,15 @@ func main(){
     log.Printf("Initializing")
     gtk.Init(&os.Args)
 
+    autoRun := flag.Bool("auto-run", false, "automatically run the last played station")
+    flag.Parse()
+
     globalQuit, globalCancel := context.WithCancel(context.Background())
 
     signaler := make(chan os.Signal, 10)
     signal.Notify(signaler, syscall.SIGINT, syscall.SIGTERM)
+
+    killExistingMplayer()
 
     var wait sync.WaitGroup
 
@@ -329,7 +594,7 @@ func main(){
         os.Exit(1)
     }()
 
-    run(globalQuit, globalCancel, &wait)
+    run(globalQuit, globalCancel, &wait, *autoRun)
 
     <-globalQuit.Done()
     wait.Wait()
