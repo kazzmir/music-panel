@@ -344,20 +344,85 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
     log.Printf("Main done")
 }
 
+func runPsPid(pid int) (string, error) {
+    command := exec.Command("ps", "-o", "cmd", strconv.Itoa(pid))
+    var out strings.Builder
+    command.Stdout = &out
+    err := command.Run()
+    return out.String(), err
+}
+
+func readProcName(pid int) (string, error) {
+    return "", fmt.Errorf("unimplemented")
+}
+
+func readProcExe(pid int) (string, error) {
+    return "", fmt.Errorf("unimplemented")
+}
+
+/* ps output is like
+ * CMD
+ * xyz arg1 arg2 ...
+ */
+func extractPsProcess(output string) (string, bool) {
+    lines := strings.Split(output, "\n")
+    if len(lines) >= 2 {
+        use := lines[1]
+        parts := strings.Fields(use)
+        if len(parts) > 0 {
+            return parts[0], true
+        }
+    }
+
+    return "", false
+}
+
+func checkProcessName(processName string, pid int) bool {
+    /* check that the given pid has the right processName using one of three methods:
+     * 1. read /proc/$pid/cmdline and compare the first string to processName
+     * 2. follow the /proc/$pid/exe symlink and check the binary has the processName
+     * 3. use 'ps -o cmd $pid' to see what the command is
+     */
+
+    procName, err := readProcName(pid)
+    if err == nil {
+        return procName == processName
+    }
+    
+    procExe, err := readProcExe(pid)
+    if err == nil {
+        // procExe is a path to some binary on the system
+        return filepath.Base(procExe) == processName
+    }
+
+    psOutput, err := runPsPid(pid)
+    if err == nil {
+        psName, ok := extractPsProcess(psOutput)
+        if ok {
+            return psName == processName
+        }
+    }
+
+    return false
+}
+
 /* kill a pid but only if it has the given process name */
 func maybeKillPid(processName string, pid int){
+    // first check the process even exists
     process, err := os.FindProcess(pid)
     if err != nil {
         return
     }
 
-    log.Printf("Killing leftover mplayer process %v", pid)
+    if checkProcessName(processName, pid) {
+        log.Printf("Killing leftover mplayer process %v", pid)
 
-    _ = process
+        _ = process
 
-    /* FIXME: check process name by looking at /proc/$pid/cmdline */
+        /* FIXME: check process name by looking at /proc/$pid/cmdline */
 
-    syscall.Kill(-pid, syscall.SIGTERM)
+        syscall.Kill(-pid, syscall.SIGTERM)
+    }
 }
 
 func killExistingMplayer(){
