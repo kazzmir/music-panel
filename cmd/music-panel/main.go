@@ -372,7 +372,11 @@ func readProcName(pid int) (string, error) {
 }
 
 func readProcExe(pid int) (string, error) {
-    return "", fmt.Errorf("unimplemented")
+    link, err := filepath.EvalSymlinks(fmt.Sprintf("/proc/%v/exe", pid))
+    if err != nil {
+        return "", err
+    }
+    return link, nil
 }
 
 /* ps output is like
