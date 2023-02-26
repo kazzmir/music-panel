@@ -4,6 +4,7 @@ import (
     "testing"
     "os/exec"
     "syscall"
+    "path/filepath"
     _ "log"
 )
 
@@ -28,6 +29,24 @@ func TestProc(test *testing.T){
     }
     if psName != "sleep" {
         test.Fatalf("Unexpected process name from ps: %v", psName)
+    }
+
+    name, err := readProcName(pid)
+    if err != nil {
+        test.Fatalf("could not read name from /proc: %v", err)
+    }
+
+    if name != "sleep" {
+        test.Fatalf("unexpected name from proc: %v", name)
+    }
+
+    name2, err := readProcExe(pid)
+    if err != nil {
+        test.Fatalf("could not read proc exe: %v", err)
+    }
+
+    if filepath.Base(name2) != "sleep" {
+        test.Fatalf("got unexpected exe name: %v", name2)
     }
 }
 

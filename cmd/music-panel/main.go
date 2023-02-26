@@ -9,6 +9,7 @@ import (
     "syscall"
     "sort"
     "sync"
+    "bytes"
     "strings"
     "strconv"
     "log"
@@ -352,8 +353,22 @@ func runPsPid(pid int) (string, error) {
     return out.String(), err
 }
 
+/* /proc/$pid/cmdline contains the program and its arguments as it was executed where each
+ * string value is separated by a null (0) byte
+ */
 func readProcName(pid int) (string, error) {
-    return "", fmt.Errorf("unimplemented")
+    data, err := os.ReadFile(fmt.Sprintf("/proc/%v/cmdline", pid))
+    if err != nil {
+        return "", err
+    }
+
+    /* the command should be the first thing in the output that ends with an null byte */
+    before, _, found := bytes.Cut(data, []byte{0})
+    if found {
+        return string(before), nil
+    }
+
+    return "", fmt.Errorf("unable to parse cmdline")
 }
 
 func readProcExe(pid int) (string, error) {
