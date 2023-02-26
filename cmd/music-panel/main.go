@@ -375,7 +375,9 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
                     if ok {
                         log.Printf("Stop playing")
                         currentPlaying = NoMusic
-                        icon.SetFromFile("off.png")
+                        path := SaveTempPng(PngOff)
+                        icon.SetFromFile(path)
+                        os.Remove(path)
                         icon.SetTooltipText("Not playing")
                         playCancel()
                         playQuit, playCancel = context.WithCancel(context.Background())
@@ -408,8 +410,9 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
                             /* FIXME: race condition */
                             currentPlaying = play.Name
 
-                            path := "on.png"
+                            path := SaveTempPng(PngOn)
                             icon.SetFromFile(path)
+                            os.Remove(path)
                             icon.SetTooltipText(fmt.Sprintf("Playing '%v'", play.Name))
 
                             playCancel()
