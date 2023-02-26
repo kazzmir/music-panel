@@ -217,6 +217,7 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
         killQuit, killCancel := context.WithCancel(context.Background())
         /* FIXME: be able to run with ffmpeg, gstreamer, maybe some other players */
         command := exec.CommandContext(killQuit, "mplayer", "-prefer-ipv4", "-loop", "0", url)
+        command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
         err := command.Start()
 
         if err != nil {
@@ -240,7 +241,8 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
 
         go func(){
             <-quit.Done()
-            command.Process.Signal(syscall.SIGTERM)
+            // command.Process.Signal(syscall.SIGTERM)
+            syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
             time.Sleep(2 * time.Second)
             // make sure the process dies
             killCancel()
