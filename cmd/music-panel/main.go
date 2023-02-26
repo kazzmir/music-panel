@@ -10,6 +10,7 @@ import (
     "sort"
     "sync"
     "flag"
+    _ "embed"
     "bytes"
     "strings"
     "strconv"
@@ -22,6 +23,11 @@ import (
     "gopkg.in/yaml.v2"
     "github.com/mattn/go-gtk/gtk"
 )
+
+//go:embed on.png
+var PngOn []byte
+//go:embed off.png
+var PngOff []byte
 
 func GetOrCreateConfigDir() (string, error) {
     configDir, err := os.UserConfigDir()
@@ -211,22 +217,59 @@ func readLastName() (string, bool) {
     return string(data), true
 }
 
+func SaveTempPng(data []byte) string {
+    path, err := os.CreateTemp("", "music-panel*.png")
+    if err != nil {
+        out := "/tmp/music-panel-tmp.png"
+        err := os.WriteFile(out, data, 0600)
+        if err != nil {
+            // not sure what to do
+            return ""
+        }
+        return out
+    }
+
+    path.Write(data)
+
+    return path.Name()
+}
+
+func doLoadConfig() (Config, error) {
+    configPath := "config.yml"
+    config, err := loadConfig(configPath)
+    if err == nil {
+        log.Printf("Loaded '%v'", configPath)
+        return config, nil
+    }
+
+    configDir, err := GetOrCreateConfigDir()
+    if err == nil {
+        full := filepath.Join(configDir, configPath)
+        config, err = loadConfig(full)
+        if err == nil {
+            log.Printf("Loaded '%v'", full)
+            return config, nil
+        }
+    }
+
+    return Config{}, err
+}
+
 func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync.WaitGroup, autoRun bool){
     defer globalCancel()
 
-    configPath := "config.yml"
-    config, err := loadConfig(configPath)
+    config, err := doLoadConfig()
     if err != nil {
         log.Printf("Could not load config file: %v", err)
         return
     }
 
-    log.Printf("Loaded '%v'", configPath)
-
     actions := make(chan ProgramAction, 10)
 
     currentPlaying := NoMusic
-    icon := gtk.NewStatusIconFromFile("off.png")
+    path := SaveTempPng(PngOff)
+    icon := gtk.NewStatusIconFromFile(path)
+    os.Remove(path)
     icon.Connect("activate", func() {
         menu := makePopup(config, currentPlaying, actions)
         menu.Popup(nil, nil, nil, nil, 0, gtk.GetCurrentEventTime())
@@ -346,8 +389,9 @@ func run(globalQuit context.Context, globalCancel context.CancelFunc, wait *sync
                             if url != "" {
                                 log.Printf("Play url '%v' = '%v'", currentPlaying, url)
 
-                                path := "on.png"
+                                path := SaveTempPng(PngOn)
                                 icon.SetFromFile(path)
+                                os.Remove(path)
                                 icon.SetTooltipText(fmt.Sprintf("Playing '%v'", currentPlaying))
 
                                 playCancel()
