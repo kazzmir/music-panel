@@ -3,4 +3,7 @@ station1:
   url: http://some.radio.station:1234
 station2:
   name: Another radio station
-  url: http://music.i.like.com:8000
+  url:
+    # one of the urls will be chosen randomly
+    - http://music.i.like.com:8000
+    - http://another.url.com:80

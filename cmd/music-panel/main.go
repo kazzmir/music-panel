@@ -2,7 +2,8 @@ package main
 
 import (
     // "time"
-    "io/ioutil"
+    urllib "net/url"
+    "net"
     "os"
     "os/signal"
     "os/exec"
@@ -43,9 +44,39 @@ func GetOrCreateConfigDir() (string, error) {
     return configPath, nil
 }
 
+func isReachable(url string, ctx context.Context) bool {
+    // try to connect to the url with a timeout of 1 second
+
+    // extract host and port from url
+
+    parsed, err := urllib.Parse(url)
+    if err != nil {
+        return false
+    }
+
+    host := parsed.Hostname()
+    port := parsed.Port()
+    if port == "" {
+        port = "80"
+    }
+
+    timeoutContext, cancel := context.WithTimeout(ctx, time.Millisecond * 1000)
+    defer cancel()
+
+    var dialer net.Dialer
+
+    conn, err := dialer.DialContext(timeoutContext, "tcp", net.JoinHostPort(host, port))
+    if err != nil {
+        return false
+    }
+    conn.Close()
+
+    return true
+}
+
 type Config struct {
     /* map from a name to a url */
-    Urls map[string]string
+    Urls map[string][]string
 }
 
 func (config *Config) AllItems() []string {
@@ -56,9 +87,44 @@ func (config *Config) AllItems() []string {
     return out
 }
 
+func drain(c chan string) {
+    for {
+        _, ok := <-c
+        if !ok {
+            return
+        }
+    }
+}
+
 func (config *Config) GetUrl(name string) string {
-    url, ok := config.Urls[name]
+    urls, ok := config.Urls[name]
     if ok {
+        choices := make(chan string)
+
+        var wait sync.WaitGroup
+
+        quit, cancel := context.WithCancel(context.Background())
+        defer cancel()
+
+        for _, check := range urls {
+            wait.Add(1)
+            url := check
+            go func() {
+                defer wait.Done()
+                if isReachable(url, quit) {
+                    log.Printf("Url '%v' is reachable", url)
+                    choices <- url
+                }
+            }()
+        }
+
+        go func(){
+            wait.Wait()
+            close(choices)
+        }()
+
+        url := <-choices
+        go drain(choices)
         return url
     }
 
@@ -67,15 +133,15 @@ func (config *Config) GetUrl(name string) string {
 
 func loadConfig(path string) (Config, error) {
     config := Config{
-        Urls: make(map[string]string),
+        Urls: make(map[string][]string),
     }
 
-    data, err := ioutil.ReadFile(path)
+    data, err := os.ReadFile(path)
     if err != nil {
         return config, err
     }
 
-    var info map[string]interface{}
+    var info map[string]any
 
     err = yaml.Unmarshal(data, &info)
     if err != nil {
@@ -92,13 +158,27 @@ func loadConfig(path string) (Config, error) {
                 log.Printf("Didn't get a name")
                 continue
             }
-            url, ok := valueData["url"]
+            urlValue, ok := valueData["url"]
             if !ok {
                 log.Printf("Didn't get a url")
                 continue
             }
 
-            config.Urls[name.(string)] = url.(string)
+            switch urlValue.(type) {
+                case string:
+                    config.Urls[name.(string)] = []string{urlValue.(string)}
+                case []any:
+                    var values []any = urlValue.([]any)
+                    var urls []string
+                    for _, v := range values {
+                        urlStr, ok := v.(string)
+                        if ok {
+                            urls = append(urls, urlStr)
+                        }
+                    }
+                    config.Urls[name.(string)] = urls
+            }
+
         }
     }
 
